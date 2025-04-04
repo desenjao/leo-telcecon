@@ -82,17 +82,42 @@ app.post('/signup', async (req, res) => {
 
 app.post('/login', async (req, res) => {
   try {
+    console.log('--- Nova tentativa de login ---');
+    console.log('Corpo da requisição recebida:', req.body);
+
     const { username, password } = req.body;
+
+    if (!username || !password) {
+      console.warn('Usuário ou senha não enviados');
+      return res.status(400).json({ error: 'Usuário e senha são obrigatórios' });
+    }
+
     const { rows } = await pool.query(
       'SELECT id, password_hash FROM usuarios WHERE username = $1', 
       [username]
     );
 
-    if (rows.length === 0) return res.status(401).json({ error: 'Credenciais inválidas' });
+    console.log(`Resultado da consulta no banco para o usuário ${username}:`, rows);
+
+    if (rows.length === 0) {
+      console.warn('Usuário não encontrado no banco');
+      return res.status(401).json({ error: 'Credenciais inválidas' });
+    }
 
     const user = rows[0];
+
     const isValid = await bcrypt.compare(password, user.password_hash);
-    if (!isValid) return res.status(401).json({ error: 'Credenciais inválidas' });
+    console.log('Senha válida?', isValid);
+
+    if (!isValid) {
+      console.warn('Senha incorreta para o usuário:', username);
+      return res.status(401).json({ error: 'Credenciais inválidas' });
+    }
+
+    if (!process.env.JWT_SECRET) {
+      console.error('JWT_SECRET não definida no ambiente!');
+      return res.status(500).json({ error: 'Erro interno de configuração' });
+    }
 
     const token = jwt.sign(
       { userId: user.id },
@@ -100,9 +125,11 @@ app.post('/login', async (req, res) => {
       { expiresIn: process.env.JWT_EXPIRES_IN || '1h' }
     );
 
+    console.log('Token gerado com sucesso:', token);
+
     res.json({ token });
   } catch (err) {
-    console.error(err);
+    console.error('Erro no processo de login:', err);
     res.status(500).json({ error: 'Erro no login' });
   }
 });
