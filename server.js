@@ -6,10 +6,10 @@ import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import cors from 'cors';
 
-// Carrega variáveis de ambiente
+// Configuração inicial
 dotenv.config();
 
-// Configuração do pool usando a string de conexão diretamente
+// Configuração do pool de conexões
 const pool = new Pool({
   connectionString: process.env.DB_CONNECTION_STRING,
   ssl: {
@@ -19,7 +19,7 @@ const pool = new Pool({
   idleTimeoutMillis: 30000
 });
 
-// Teste de conexão
+// Teste de conexão com o banco
 pool.query('SELECT 1')
   .then(() => console.log('✅ Conexão com Neon estabelecida com sucesso!'))
   .catch(err => {
@@ -43,7 +43,7 @@ app.use((req, res, next) => {
   next();
 });
 
-// Autenticação com JWT
+// Sistema de autenticação
 const revokedTokens = new Set();
 
 const authenticateToken = (req, res, next) => {
@@ -60,7 +60,29 @@ const authenticateToken = (req, res, next) => {
   });
 };
 
-// Rotas públicas
+// ======================================
+// ROTAS PÚBLICAS (sem autenticação)
+// ======================================
+
+// Rota de verificação do servidor
+app.get('/', async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      'SELECT current_database(), current_user, now() as server_time'
+    );
+    res.json({
+      status: 'online',
+      database: rows[0].current_database,
+      user: rows[0].current_user,
+      time: rows[0].server_time,
+      neon: true
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Database error', details: err.message });
+  }
+});
+
+// Rotas de autenticação
 app.post('/signup', async (req, res) => {
   try {
     const { username, password, email } = req.body;
@@ -133,11 +155,11 @@ app.post('/login', async (req, res) => {
     res.status(500).json({ error: 'Erro no login' });
   }
 });
+
 app.post('/novo', async (req, res) => {
   try {
     const { username, password } = req.body;
 
-    // Verifica se o username já existe
     const { rows } = await pool.query(
       'SELECT id FROM usuarios WHERE username = $1', 
       [username]
@@ -147,10 +169,8 @@ app.post('/novo', async (req, res) => {
       return res.status(400).json({ error: 'Usuário já existe' });
     }
 
-    // Criptografa a senha antes de salvar
     const passwordHash = await bcrypt.hash(password, 10);
 
-    // Insere o novo usuário no banco
     const result = await pool.query(
       'INSERT INTO usuarios (username, password_hash) VALUES ($1, $2) RETURNING id', 
       [username, passwordHash]
@@ -163,31 +183,17 @@ app.post('/novo', async (req, res) => {
   }
 });
 
+// ======================================
+// ROTAS AUTENTICADAS
+// ======================================
 
+// Rotas de autenticação (requerem token)
 app.post('/logout', authenticateToken, (req, res) => {
   revokedTokens.add(req.headers['authorization']?.split(' ')[1]);
   res.json({ message: 'Logout realizado com sucesso' });
 });
 
-// Rota de verificação
-app.get('/',  async (req, res) => {
-  try {
-    const { rows } = await pool.query(
-      'SELECT current_database(), current_user, now() as server_time'
-    );
-    res.json({
-      status: 'online',
-      database: rows[0].current_database,
-      user: rows[0].current_user,
-      time: rows[0].server_time,
-      neon: true
-    });
-  } catch (err) {
-    res.status(500).json({ error: 'Database error', details: err.message });
-  }
-});
-
-// Clientes
+// Rotas de clientes
 app.get('/clientes', authenticateToken, async (req, res) => {
   try {
     const { rows } = await pool.query('SELECT * FROM clientes LIMIT 100');
@@ -200,6 +206,33 @@ app.get('/clientes', authenticateToken, async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Database error',
+      details: process.env.NODE_ENV === 'development' ? err.message : undefined
+    });
+  }
+});
+
+app.get('/clientes/:id', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const result = await pool.query('SELECT * FROM clientes WHERE id = $1', [id]);
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Cliente não encontrado' });
+    }
+
+    console.log(`🔎 Cliente #${id} encontrado:`, result.rows[0]);
+
+    res.status(200).json(result.rows[0]);
+  } catch (err) {
+    console.error('❌ Erro ao buscar cliente por ID:', {
+      message: err.message,
+      stack: err.stack,
+      params: req.params
+    });
+
+    res.status(500).json({ 
+      error: 'Erro ao buscar cliente',
       details: process.env.NODE_ENV === 'development' ? err.message : undefined
     });
   }
@@ -224,7 +257,7 @@ app.post('/clientes', authenticateToken, async (req, res) => {
   }
 });
 
-// Pagamentos
+// Rotas de pagamentos
 app.get('/clientes/:id/pagamentos', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
