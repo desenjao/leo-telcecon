@@ -101,6 +101,36 @@ app.post('/login', async (req, res) => {
     res.status(500).json({ error: 'Erro no login' });
   }
 });
+app.post('/novo', async (req, res) => {
+  try {
+    const { username, password } = req.body;
+
+    // Verifica se o username já existe
+    const { rows } = await pool.query(
+      'SELECT id FROM usuarios WHERE username = $1', 
+      [username]
+    );
+
+    if (rows.length > 0) {
+      return res.status(400).json({ error: 'Usuário já existe' });
+    }
+
+    // Criptografa a senha antes de salvar
+    const passwordHash = await bcrypt.hash(password, 10);
+
+    // Insere o novo usuário no banco
+    const result = await pool.query(
+      'INSERT INTO usuarios (username, password_hash) VALUES ($1, $2) RETURNING id', 
+      [username, passwordHash]
+    );
+
+    res.status(201).json({ message: 'Usuário cadastrado com sucesso', userId: result.rows[0].id });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erro ao cadastrar usuário' });
+  }
+});
+
 
 app.post('/logout', authenticateToken, (req, res) => {
   revokedTokens.add(req.headers['authorization']?.split(' ')[1]);
